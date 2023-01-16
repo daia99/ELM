@@ -34,6 +34,8 @@ from .configuration_codegen import CodeGenConfig
 
 logger = logging.get_logger(__name__)
 
+def test_commit():
+    pass
 
 def fixed_pos_embedding(x, seq_dim=1, seq_len=None):
     dim = x.shape[-1]
