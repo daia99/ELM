@@ -10,7 +10,7 @@ from torch import nn
 from torchtyping import TensorType
 from trlx.data.configs import TRLConfig
 from trlx.trainer import register_trainer
-from trlx.trainer.accelerate_ppo_trainer import AcceleratePPOModel
+from trlx.trainer.accelerate_ppo_trainer import AcceleratePPOTrainer
 from trlx.trainer.nn.ppo_models import CausalLMHydraWithValueHead
 
 
@@ -132,7 +132,7 @@ class SoftEmbedding(nn.Module):
 
 
 @register_trainer
-class AcceleratePPOSoftpromptTrainer(AcceleratePPOModel):
+class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
     def __init__(self, config, train_mode=True):
         # account for extra prefix tokens
         config.method.gen_kwargs["max_length"] += config.method.n_soft_tokens

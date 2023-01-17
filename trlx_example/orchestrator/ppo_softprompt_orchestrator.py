@@ -5,7 +5,7 @@ import ray
 import torch
 from trlx.data.accelerate_base_datatypes import PromptBatch
 from trlx.data.ppo_types import PPORLElement
-from trlx.model import BaseRLModel
+from trlx.trainer import BaseRLTrainer
 from trlx.orchestrator import register_orchestrator
 from trlx.orchestrator.ppo_orchestrator import PPOOrchestrator
 from trlx.pipeline import BasePipeline
@@ -17,7 +17,7 @@ from trlx.utils.modeling import logprobs_from_logits
 class PPOSoftpromptOrchestrator(PPOOrchestrator):
     def __init__(
         self,
-        model: BaseRLModel,
+        model: BaseRLTrainer,
         pipeline: BasePipeline,
         reward_fn: Callable,
         metric_fn: Callable = None,

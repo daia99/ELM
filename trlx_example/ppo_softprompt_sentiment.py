@@ -4,12 +4,12 @@ import trlx
 from datasets import load_dataset
 
 # to register the added softprompt model, and supported orchestrator, need to import here
-from model.accelerate_ppo_softprompt_model import AcceleratePPOSoftpromptModel
+from trainer.accelerate_ppo_softprompt_trainer import AcceleratePPOSoftpromptTrainer
 from orchestrator.ppo_softprompt_orchestrator import PPOSoftpromptOrchestrator
 from transformers import pipeline
 from trlx.data.configs import TRLConfig
 from trlx.data.method_configs import register_method
-from trlx.model.nn.ppo_models import PPOConfig
+from trlx.trainer.nn.ppo_models import PPOConfig
 
 
 @dataclass
@@ -33,9 +33,9 @@ if __name__ == "__main__":
     imdb = load_dataset("imdb", split="train+test")
     prompts = [" ".join(review.split()[:4]) for review in imdb["text"]]
 
-    config = TRLConfig.load_yaml("configs/ppo_softprompt_config.yml")
+    config = TRLConfig.load_yaml("/mnt/train-fss/adai/OpenELM/trlx_example/configs/ppo_softprompt_config.yml")
 
-    model = trlx.train(
+    trlx.train(
         "lvwerra/gpt2-imdb",
         reward_fn=reward_fn,
         prompts=prompts,
