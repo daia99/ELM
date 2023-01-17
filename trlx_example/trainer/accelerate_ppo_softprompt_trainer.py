@@ -133,12 +133,11 @@ class SoftEmbedding(nn.Module):
 
 @register_trainer
 class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
-    def __init__(self, config, train_mode=True):
+    def __init__(self, config, train_mode=True, **kwargs):
         # account for extra prefix tokens
-        config.method.gen_kwargs["max_length"] += config.method.n_soft_tokens
-        config.method.gen_kwargs["min_length"] += config.method.n_soft_tokens
+        config.method.gen_kwargs["max_new_tokens"] += config.method.n_soft_tokens
 
-        super().__init__(config)
+        super().__init__(config, **kwargs)
 
         assert (
             config.method.n_soft_tokens > 0
