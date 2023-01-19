@@ -19,11 +19,9 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
         self,
         model: BaseRLTrainer,
         pipeline: BasePipeline,
-        reward_fn: Callable,
-        metric_fn: Callable = None,
         chunk_size: int = 512,
     ):
-        super().__init__(model, pipeline, reward_fn, metric_fn, chunk_size)
+        super().__init__(model, pipeline, chunk_size)
         self.n_soft_tokens = model.model.base_model.get_input_embeddings().n_tokens
 
     def make_experience(self, num_rollouts: int = 1024, iter_count: int = 0):
@@ -44,7 +42,7 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
                 batch = next(self.pipeline_iterator)
 
             exp_generate_time = time()
-            samples = self.rl_model.generate(**batch)
+            samples = self.trainer.generate(**batch)
             stats["exp_generate_time"] = time() - exp_generate_time
 
             # here, we take care to handle additional softprompt indices
@@ -53,7 +51,7 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
             response_tensors = samples[
                 :, query_len:
             ]  # ignore softprompt padding index tokens
-            texts = self.rl_model.tokenizer.batch_decode(
+            texts = self.trainer.tokenizer.batch_decode(
                 samples, skip_special_tokens=True
             )
             exp_score_time = time()
@@ -69,26 +67,26 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
             stats["running_mean"] = self.running.mean
             stats["running_std"] = self.running.std
 
-            if self.rl_model.config.method.scale_reward == "running":
+            if self.trainer.config.method.scale_reward == "running":
                 scores /= self.running.std
-            elif self.rl_model.config.method.scale_reward == "ref":
+            elif self.trainer.config.method.scale_reward == "ref":
                 scores /= self.ref_std
 
-            clip_reward = self.rl_model.config.method.cliprange_reward
+            clip_reward = self.trainer.config.method.cliprange_reward
             if clip_reward:
                 scores = torch.clip(scores, -clip_reward, clip_reward)
 
             # Precompute logprobs, values
-            all_tokens, attention_mask, position_ids = self.rl_model.get_model_inputs(
+            all_tokens, attention_mask, position_ids = self.trainer.get_model_inputs(
                 query_tensors.to(response_tensors.device), response_tensors
             )
             with torch.no_grad():
-                logits, *_, v = self.rl_model.model(
+                logits, *_, v = self.trainer.model(
                     all_tokens, attention_mask=attention_mask, position_ids=position_ids
                 )
                 # TODO(dahoas): When hydra model works need to also support generation on hydra head
-                if hasattr(self.rl_model.model, "frozen_head"):
-                    ref_logits = self.rl_model.model.forward_hydra(
+                if hasattr(self.trainer.model, "frozen_head"):
+                    ref_logits = self.trainer.model.forward_hydra(
                         all_tokens,
                         attention_mask=attention_mask,
                         position_ids=position_ids,
@@ -101,7 +99,7 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
                         position_ids=position_ids.cpu(),
                     )
 
-            ref_logits = ref_logits.to(self.rl_model.accelerator.device)
+            ref_logits = ref_logits.to(self.trainer.accelerator.device)
             logprobs = logprobs_from_logits(logits[:, :-1, :], all_tokens[:, 1:])
             ref_logprobs = logprobs_from_logits(
                 ref_logits[:, :-1, :], all_tokens[:, 1:]
@@ -114,9 +112,9 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
 
             # Compute rewards
             kls = all_logprobs - all_ref_logprobs
-            non_score_rewards = -self.rl_model.kl_ctl.value * kls
+            non_score_rewards = -self.trainer.kl_ctl.value * kls
             all_rewards = non_score_rewards.clone()
-            all_rewards[:, -1] += scores.to(self.rl_model.accelerator.device)
+            all_rewards[:, -1] += scores.to(self.trainer.accelerator.device)
 
             query_tensors = query_tensors.cpu()
             response_tensors = response_tensors.cpu()
@@ -138,11 +136,11 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
             ]
             ppo_rl_elements += new_ppo_rl_elements
 
-        stats["kl_ctl_value"] = self.rl_model.kl_ctl.value
+        stats["kl_ctl_value"] = self.trainer.kl_ctl.value
         stats["exp_time"] = exp_time
 
         if not ray.is_initialized():
-            self.rl_model.accelerator.log(stats, step=iter_count)
+            self.trainer.accelerator.log(stats, step=iter_count)
 
         # Push samples and rewards to model's rollout storage
-        self.rl_model.push_to_store(ppo_rl_elements)
+        self.trainer.push_to_store(ppo_rl_elements)
