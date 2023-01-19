@@ -71,15 +71,9 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
                 for output in outputs
             ]
             response_tensors = torch.vstack(outputs).to(device)
-            
-            response_tensors_2 = samples[
-                :, query_len:
-            ]  # ignore softprompt padding index tokens
-            texts = self.trainer.tokenizer.batch_decode(
-                samples, skip_special_tokens=True
-            )
+
             exp_score_time = time()
-            # scores = torch.as_tensor(self.score(texts), device=samples.device)
+
             scores = torch.tensor(
                 self.trainer.reward_fn(
                     samples=str_samples,
@@ -98,84 +92,6 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
             stats["exp_scores/std"] = all_scores_std
             stats["exp_scores/running_mean"] = self.running.mean
             stats["exp_scores/running_std"] = self.running.std
-
-        #     if self.trainer.config.method.scale_reward == "running":
-        #         scores /= self.running.std
-        #     elif self.trainer.config.method.scale_reward == "ref":
-        #         scores /= self.ref_std
-
-        #     clip_reward = self.trainer.config.method.cliprange_reward
-        #     if clip_reward:
-        #         scores = torch.clip(scores, -clip_reward, clip_reward)
-
-        #     # Precompute logprobs, values
-        #     all_tokens, attention_mask, position_ids = self.trainer.get_model_inputs(
-        #         query_tensors.to(response_tensors.device), response_tensors
-        #     )
-        #     with torch.no_grad():
-        #         logits, *_, v = self.trainer.model(
-        #             all_tokens, attention_mask=attention_mask, position_ids=position_ids
-        #         )
-        #         # TODO(dahoas): When hydra model works need to also support generation on hydra head
-        #         if hasattr(self.trainer.model, "frozen_head"):
-        #             ref_logits = self.trainer.model.forward_hydra(
-        #                 all_tokens,
-        #                 attention_mask=attention_mask,
-        #                 position_ids=position_ids,
-        #                 return_dict=False,
-        #             )
-        #         else:
-        #             ref_logits, _, *_ = self.ref_model(
-        #                 all_tokens,
-        #                 attention_mask=attention_mask,
-        #                 position_ids=position_ids,
-        #             )
-
-        #     ref_logits = ref_logits.to(self.trainer.accelerator.device)
-        #     logprobs = logprobs_from_logits(logits[:, :-1, :], all_tokens[:, 1:])
-        #     ref_logprobs = logprobs_from_logits(
-        #         ref_logits[:, :-1, :], all_tokens[:, 1:]
-        #     )
-        #     start = query_tensors.size()[1] - 1
-        #     end = query_tensors.size()[1] + response_tensors.size()[1] - 1
-        #     all_values = v[:, start:end]
-        #     all_logprobs = logprobs[:, start:end]
-        #     all_ref_logprobs = ref_logprobs[:, start:end]
-
-        #     # Compute rewards
-        #     kls = all_logprobs - all_ref_logprobs
-        #     non_score_rewards = -self.trainer.kl_ctl.value * kls
-        #     all_rewards = non_score_rewards.clone()
-        #     all_rewards[:, -1] += scores.to(self.trainer.accelerator.device)
-
-        #     query_tensors = query_tensors.cpu()
-        #     response_tensors = response_tensors.cpu()
-        #     all_logprobs = all_logprobs.cpu()
-        #     all_values = all_values.cpu()
-        #     all_rewards = all_rewards.cpu()
-
-        #     exp_time = clock.tick()
-
-        #     new_ppo_rl_elements = [
-        #         PPORLElement(
-        #             query_tensor=query_tensors[i, :],
-        #             response_tensor=response_tensors[i, :],
-        #             logprobs=all_logprobs[i, :],
-        #             values=all_values[i, :],
-        #             rewards=all_rewards[i, :],
-        #         )
-        #         for i in range(query_tensors.size()[0])
-        #     ]
-        #     ppo_rl_elements += new_ppo_rl_elements
-
-        # stats["kl_ctl_value"] = self.trainer.kl_ctl.value
-        # stats["exp_time"] = exp_time
-
-        # if not ray.is_initialized():
-        #     self.trainer.accelerator.log(stats, step=iter_count)
-
-        # # Push samples and rewards to model's rollout storage
-        # self.trainer.push_to_store(ppo_rl_elements)
 
             if self.trainer.config.method.scale_reward == "running":
                 scores /= self.running.std
