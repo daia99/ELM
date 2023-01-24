@@ -16,6 +16,8 @@ from trlx.trainer.accelerate_ppo_trainer import AcceleratePPOTrainer
 from trlx.trainer.accelerate_base_trainer import AccelerateRLTrainer
 from trlx.trainer.nn.ppo_models import CausalLMHydraWithValueHead
 from trlx.utils import significant
+from trlx.data.ppo_types import PPORLBatch
+from trlx.utils.modeling import logprobs_from_logits
 
 
 class SoftEmbedding(nn.Module):
@@ -430,3 +432,53 @@ class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
 
         self.nth_evaluation += 1
         return stats
+
+    def loss(self, batch: PPORLBatch):
+        # Move `batch` data to `accelerator` device
+        query_tensors = batch.query_tensors.to(self.accelerator.device)
+        response_tensors = batch.response_tensors.to(self.accelerator.device)
+        old_logprobs = batch.logprobs.to(self.accelerator.device)
+        old_values = batch.values.to(self.accelerator.device)
+        old_rewards = batch.rewards.to(self.accelerator.device)
+        response_length = old_rewards.shape[1]
+
+        advantages, returns = self.config.method.get_advantages_and_returns(
+            old_values, old_rewards, response_length
+        )
+
+        # modified from parent method to support soft prompts
+        tokens = torch.cat((query_tensors, response_tensors), dim=1)
+        attention_mask = (
+            tokens.not_equal(self.tokenizer.pad_token_id).long().to(tokens.device)
+        )
+        # to handle extra softprompts, set attention at softprompt indices
+        first_non_pad_indices = torch.argmax(attention_mask, dim=1)
+        for batch_idx, first_non_pad_idx in enumerate(first_non_pad_indices.tolist()):
+            start = first_non_pad_idx - self.n_soft_tokens
+            end = first_non_pad_idx
+            attention_mask[batch_idx, start:end] = 1.0
+        outputs = self.model(tokens, attention_mask, return_dict=True)
+        logits = outputs.logits
+        values_pred = outputs.value
+        values_pred = values_pred[:, :-1]
+        logprobs = logprobs_from_logits(logits[:, :-1, :], tokens[:, 1:])
+
+        start = query_tensors.shape[1] - 1
+        end = start + response_length
+        logprobs, values_pred, mask = (
+            logprobs[:, start:end],
+            values_pred[:, start:end],
+            attention_mask[:, start:end],
+        )
+
+        loss, stats = self.config.method.loss(
+            logprobs=logprobs,
+            values=values_pred,
+            old_logprobs=old_logprobs,
+            old_values=old_values,
+            advantages=advantages,
+            returns=returns,
+            mask=mask,
+        )
+        self.approx_kl = stats["policy/approx_kl"]  # Update kl controller stats
+        return loss, stats
