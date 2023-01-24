@@ -8,10 +8,14 @@ import torch.nn.functional as F
 import wandb
 from torch import nn
 from torchtyping import TensorType
+from rich.console import Console
+from rich.table import Table
 from trlx.data.configs import TRLConfig
 from trlx.trainer import register_trainer
 from trlx.trainer.accelerate_ppo_trainer import AcceleratePPOTrainer
+from trlx.trainer.accelerate_base_trainer import AccelerateRLTrainer
 from trlx.trainer.nn.ppo_models import CausalLMHydraWithValueHead
+from trlx.utils import significant
 
 
 class SoftEmbedding(nn.Module):
@@ -191,6 +195,40 @@ class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
         Modified to handle indices containing soft prompts
         """
         # pad for soft prompt indices (using same token as for padding)
+        input_ids_padded, attention_mask_padded = self.softprompt_pad_input_and_mask(input_ids, attention_mask)
+
+        if self.generate_experience_kwargs is not None:
+            kwargs = dict(self.generate_experience_kwargs, **kwargs)
+        else:
+            kwargs = dict(self.generate_kwargs, **kwargs)
+        kwargs = dict(self.generate_kwargs, **kwargs)
+
+        with torch.no_grad():
+            # disable cache needed for softprompt compatibility
+            return self.accelerator.unwrap_model(self.model).generate(
+                input_ids=input_ids_padded,
+                attention_mask=attention_mask_padded,
+                use_cache=False,
+                **kwargs,
+            )
+
+    def generate_eval(self, input_ids, attention_mask=None, **kwargs):
+        """Wraps hf's `generate` adding some specific method's defaults"""
+        # pad for soft prompt indices (using same token as for padding)
+        input_ids_padded, attention_mask_padded = self.softprompt_pad_input_and_mask(input_ids, attention_mask)
+
+        kwargs = dict(self.generate_kwargs, **kwargs)
+
+        with torch.no_grad():
+            # disable cache needed for softprompt compatibility
+            return self.accelerator.unwrap_model(self.model).generate(
+                input_ids=input_ids_padded,
+                attention_mask=attention_mask_padded,
+                use_cache=False,
+                **kwargs,
+            )
+
+    def softprompt_pad_input_and_mask(self, input_ids, attention_mask):
         input_ids = torch.cat(
             [
                 torch.full(
@@ -213,17 +251,9 @@ class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
                 1,
             )
             attention_mask = attention_mask.to(self.accelerator.device)
-
-        kwargs = dict(self.generate_kwargs, **kwargs)
-
-        with torch.no_grad():
-            return self.accelerator.unwrap_model(self.model).generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                use_cache=False,
-                **kwargs,
-            )  # disable cache needed for softprompt compatibility
-
+        
+        return input_ids,attention_mask
+    
     def get_model_inputs(
         self,
         query_tensors: TensorType["batch_size", "query_size"],
@@ -250,86 +280,153 @@ class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
         position_ids.masked_fill_(attention_mask.eq(0), 0)
         return tokens, attention_mask, position_ids
 
-    def evaluate(self):
+    def evaluate(self):  # noqa: C901
         """
         Samples model on `eval_prompts`, logs stats with `reward_fn` or `metric_fn` if provided
-
+        
         Modified to support plotting of metrics involving soft prompts
         """
         stats = {}
-        all_samples = []
-        generate_time = time()
-        for prompts in self.eval_dataloader:
-            if isinstance(prompts, torch.Tensor):
-                samples = self.generate(prompts)
+        table = []
+
+        # Do multiple evaluations over a single list in `gen_kwargs` if present
+        if self.generate_sweep_kwarg is not None:
+            gen_sweep_arg, gen_sweep_values = self.generate_sweep_kwarg
+        else:
+            gen_sweep_values = [None]
+
+        for gen_sweep_value in gen_sweep_values:
+            # A dedicated suffix for wandb logging
+            if gen_sweep_value is not None:
+                sweep_suffix = f"@{gen_sweep_arg}={gen_sweep_value}"
             else:
-                samples = self.generate(**prompts)
+                sweep_suffix = ""
 
-            if isinstance(samples, tuple):
-                samples, *_ = samples
+            all_samples = []
+            all_prompts = []
+            prompt_sizes = []
+            generate_time = time()
+            for prompts in self.eval_dataloader:
+                if self.generate_sweep_kwarg:
+                    samples = self.generate_eval(
+                        **prompts, **{gen_sweep_arg: gen_sweep_value}
+                    )
+                else:
+                    samples = self.generate_eval(**prompts)
 
-            pad_token = self.tokenizer.eos_token_id if self.tokenizer else 0
-            all_samples.append(
-                F.pad(
-                    samples,
-                    (0, self.max_length - samples.shape[1]),
-                    value=pad_token,
+                if self.config.model.model_arch_type == "seq2seq":
+                    samples = samples[:, 1:]
+
+                all_samples.append(
+                    F.pad(
+                        samples,
+                        (0, self.max_length - samples.shape[1]),
+                        value=self.tokenizer.pad_token_id,
+                    )
                 )
-            )
-        stats["generate_time"] = time() - generate_time
+                all_prompts.append(
+                    F.pad(
+                        prompts.input_ids,
+                        (0, self.max_length - prompts.input_ids.shape[1]),
+                        value=self.tokenizer.pad_token_id,
+                    ).to(samples.device)
+                )
+                prompt_sizes.append(
+                    torch.tensor(
+                        prompts.input_ids.shape[1], device=samples.device
+                    ).repeat(len(prompts.input_ids))
+                )
 
-        samples = self.accelerator.gather(torch.vstack(all_samples))
+            stats["time/generate"] = time() - generate_time
 
+            samples = self.accelerator.gather(torch.vstack(all_samples))
+            prompts = self.accelerator.gather(torch.vstack(all_prompts))
+            prompt_sizes = self.accelerator.gather(torch.hstack(prompt_sizes))
+
+            if self.accelerator.is_main_process:
+                str_samples, str_prompts, str_outputs = self.decode(
+                    prompts, samples, prompt_sizes
+                )
+
+                columns = ["prompt", "output"]
+                columns_data = [str_prompts, str_outputs]
+
+                # in online setting, compute the reward for validation
+                if self.reward_fn:
+                    rewards = torch.tensor(
+                        self.reward_fn(
+                            samples=str_samples,
+                            prompts=str_prompts,
+                            outputs=str_outputs,
+                        ),
+                        dtype=float,
+                    )
+                    mean_reward = rewards.mean().item()
+                    columns.append("reward")
+                    if not isinstance(rewards, list):
+                        rewards = rewards.tolist()
+                    columns_data.append(rewards)
+                    stats[f"reward/mean{sweep_suffix}"] = mean_reward
+
+                # log Euclidean distance between init and current Soft Prompt embedding parameters
+                if self.measure_soft_embedding_drift:
+                    softprompt = self.model.base_model.get_input_embeddings()
+                    stats["softprompt_drift_dist"] = (
+                        (softprompt.init_embedding - softprompt.learned_embedding)
+                        .pow(2)
+                        .sum(1)
+                        .sqrt()
+                        .mean()
+                    )
+                
+                # additionally log any other metrics
+                if self.metric_fn:
+                    metric_time = time()
+                    metrics = self.metric_fn(str_samples)
+                    stats["time/metric"] = time() - metric_time
+
+                    mean_metrics = {
+                        f"metrics/{k}{sweep_suffix}": torch.as_tensor(xs).mean(-1)
+                        for k, xs in metrics.items()
+                    }
+
+                    stats.update(mean_metrics)
+
+                    for metric, values in metrics.items():
+                        columns.append(metric)
+                        if not isinstance(values, list):
+                            values = values.tolist()
+                        columns_data.append(values)
+
+                # Prepend the sweep argument along with samples
+                if self.generate_sweep_kwarg:
+                    columns.insert(0, gen_sweep_arg)
+                    columns_data.insert(0, [gen_sweep_value] * len(samples))
+
+                table.append(list(zip(*columns_data)))
+
+        # Log and display evaluation metrics
         if self.accelerator.is_main_process:
-            if self.tokenizer:
-                samples = self.tokenizer.batch_decode(samples, skip_special_tokens=True)
+            rows = sum(list(map(list, zip(*table))), [])
 
-            if isinstance(samples[0], str):
-                columns_data = [samples]
-            else:
-                columns_data = [samples.tolist()]
-            columns = ["samples"]
+            # Add metrics/rewards to the table's title
+            table_title = f"Evaluation #{self.nth_evaluation}"
+            for k, x in stats.items():
+                if k.startswith("reward") or k.startswith("metrics"):
+                    table_title += f" {k}: {significant(x)}"
 
-            # in online setting, compute the reward for validation
-            if self.reward_fn:
-                rewards = torch.as_tensor(self.reward_fn(samples), dtype=torch.float)
-                mean_reward = rewards.mean()
-                columns.append("reward")
-                columns_data.append(rewards)
-                stats["mean_reward"] = mean_reward
-                print(f"{mean_reward=}")
+            rich_table = Table(*columns, title=table_title, show_lines=True)
 
-            # log Euclidean distance between init and current Soft Prompt embedding parameters
-            if self.measure_soft_embedding_drift:
-                softprompt = self.model.base_model.get_input_embeddings()
-                stats["softprompt_drift_dist"] = (
-                    (softprompt.init_embedding - softprompt.learned_embedding)
-                    .pow(2)
-                    .sum(1)
-                    .sqrt()
-                    .mean()
-                )
+            for ix in range(max(min(3, len(rows)), len(gen_sweep_values))):
+                rich_table.add_row(*[str(significant(x)) for x in rows[ix]])
 
-            # additionally log any other metrics
-            if self.metric_fn:
-                metric_time = time()
-                metrics = self.metric_fn(samples)
-                stats["metric_time"] = time() - metric_time
-
-                mean_metrics = {
-                    f"metrics/{k}": torch.as_tensor(xs).mean(-1)
-                    for k, xs in metrics.items()
-                }
-
-                stats.update(mean_metrics)
-
-                for metric, values in metrics.items():
-                    columns.append(metric)
-                    columns_data.append(values)
-
-            rows = list(zip(*columns_data))
-            print(rows[0])
             if not ray.is_initialized():
-                stats["samples"] = wandb.Table(columns=columns, rows=rows)
+                if "wandb" in self.config.train.tracker:
+                    import wandb
 
+                    stats["samples"] = wandb.Table(columns, rows)
+
+            Console().print(rich_table)
+
+        self.nth_evaluation += 1
         return stats
