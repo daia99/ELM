@@ -135,6 +135,12 @@ class PPOSoftpromptOrchestrator(PPOOrchestrator):
                     .long()
                     .to(device)
                 )
+                # to handle extra softprompts, set attention at softprompt indices
+                first_non_pad_indices = torch.argmax(attention_mask, dim=1)
+                for batch_idx, first_non_pad_idx in enumerate(first_non_pad_indices.tolist()):
+                    start = first_non_pad_idx - self.n_soft_tokens
+                    end = first_non_pad_idx
+                    attention_mask[batch_idx, start:end] = 1.0
                 with torch.no_grad():
                     logits, *_, values = self.trainer.model(
                         all_tokens,
