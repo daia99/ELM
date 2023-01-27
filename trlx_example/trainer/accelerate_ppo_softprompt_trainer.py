@@ -330,9 +330,10 @@ class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
                         value=self.tokenizer.pad_token_id,
                     ).to(samples.device)
                 )
+                # add by number of soft tokens so that decode can extract correct output string
                 prompt_sizes.append(
                     torch.tensor(
-                        prompts.input_ids.shape[1], device=samples.device
+                        prompts.input_ids.shape[1] + self.n_soft_tokens, device=samples.device
                     ).repeat(len(prompts.input_ids))
                 )
 
