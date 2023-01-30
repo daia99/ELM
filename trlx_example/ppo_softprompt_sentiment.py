@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List
 import os
+import sys
 
 import trlx
 from datasets import load_dataset
@@ -34,7 +35,12 @@ if __name__ == "__main__":
         device = int(os.environ.get("LOCAL_RANK", 0))
     else:
         device = -1
-    
+
+    config_file = sys.argv[1]
+    assert os.path.exists(config_file), f"Could not find config file '{config_file}'"
+
+    config = TRLConfig.load_yaml(sys.argv[1])
+
     sentiment_fn = pipeline(
         "sentiment-analysis",
         "lvwerra/distilbert-imdb",
@@ -52,8 +58,6 @@ if __name__ == "__main__":
     # Take few words off of movies reviews as prompts
     imdb = load_dataset("imdb", split="train+test")
     prompts = [" ".join(review.split()[:4]) for review in imdb["text"]]
-
-    config = TRLConfig.load_yaml("/home/andrew_dai/OpenELM/trlx_example/configs/ppo_softprompt_config.yml")
 
     trlx.train(
         "lvwerra/gpt2-imdb",
