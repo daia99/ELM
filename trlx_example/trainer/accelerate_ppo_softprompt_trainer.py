@@ -421,7 +421,7 @@ class AcceleratePPOSoftpromptTrainer(AcceleratePPOTrainer):
                 rich_table.add_row(*[str(significant(x)) for x in rows[ix]])
 
             if not ray.is_initialized():
-                if "wandb" in self.config.train.tracker:
+                if self.config.train.tracker == "wandb":
                     import wandb
 
                     stats["samples"] = wandb.Table(columns, rows)
