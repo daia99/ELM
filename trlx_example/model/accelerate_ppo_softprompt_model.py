@@ -108,15 +108,15 @@ class SoftEmbedding(nn.Module):
 
                 seq_embedding[batch_idx, start:end] = self.learned_embedding
 
-                # debug only
-                if batch_idx == 0:
-                    first_main_embedding_after_soft_embedding_assign = seq_embedding[
-                        0, first_item_idx
-                    ]
-                    assert torch.equal(
-                        main_embedding_before_soft_prompt_assign,
-                        first_main_embedding_after_soft_embedding_assign,
-                    ), "Error: soft prompt overwrote main prompt embeddings"
+                # # debug only
+                # if batch_idx == 0:
+                #     first_main_embedding_after_soft_embedding_assign = seq_embedding[
+                #         0, first_item_idx
+                #     ]
+                #     assert torch.equal(
+                #         main_embedding_before_soft_prompt_assign,
+                #         first_main_embedding_after_soft_embedding_assign,
+                #     ), "Error: soft prompt overwrote main prompt embeddings"
         else:
             input_embedding = self.wte(prompt_tokens)
             learned_embedding = self.learned_embedding.repeat(

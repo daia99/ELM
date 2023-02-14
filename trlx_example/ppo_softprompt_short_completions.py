@@ -18,11 +18,13 @@ class PPOSoftpromptConfig(PPOConfig):
     n_soft_tokens: int = None
     initialize_from_vocab: bool = True  # of softprompt
     tune_v_head: bool = True  # set in case whole model is frozen (except softprompt)
+    measure_soft_embedding_drift: bool = True  # for debugging purposes
 
 
 if __name__ == "__main__":
-    tokenizer = AutoTokenizer.from_pretrained("lvwerra/gpt2-imdb")
-    config = TRLConfig.load_yaml("configs/ppo_softprompt_config.yml")
+    config = TRLConfig.load_yaml("/nfs/scratch_2/marco/OpenELM/trlx_example/configs/ppo_softprompt_config.yml")
+
+    tokenizer = AutoTokenizer.from_pretrained(config.model.tokenizer_path)
 
     max_gen_length = config.method.gen_kwargs[
         "max_length"
@@ -38,14 +40,15 @@ if __name__ == "__main__":
         return reward  # list of scalar reward scores for each response
 
     # Take few words off of movies reviews as prompts
-    imdb = load_dataset("imdb", split="train+test")
-    prompts = [" ".join(review.split()[:4]) for review in imdb["text"]]
+    # imdb = load_dataset("imdb", split="train+test")
+    code_data = load_dataset("tomekkorbak/python-github-code", split="train")
+    prompts = [" ".join(code.split()[:4]) for code in code_data["text"]]
 
     model = trlx.train(
-        "lvwerra/gpt2-imdb",
+        config.model.model_path,
         reward_fn=reward_fn,
         prompts=prompts,
-        eval_prompts=["The following is a movie quote:"] * 64,
+        eval_prompts=["from . import "] * 64,
         config=config,
     )
 

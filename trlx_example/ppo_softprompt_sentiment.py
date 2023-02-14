@@ -33,7 +33,7 @@ if __name__ == "__main__":
     imdb = load_dataset("imdb", split="train+test")
     prompts = [" ".join(review.split()[:4]) for review in imdb["text"]]
 
-    config = TRLConfig.load_yaml("configs/ppo_softprompt_config.yml")
+    config = TRLConfig.load_yaml("/nfs/scratch_2/marco/OpenELM/trlx_example/configs/ppo_softprompt_config.yml")
 
     model = trlx.train(
         "lvwerra/gpt2-imdb",

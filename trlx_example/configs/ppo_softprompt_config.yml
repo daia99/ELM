@@ -1,14 +1,14 @@
 model:
-  model_path: "lvwerra/gpt2-imdb"  # Name of hf model to load
-  tokenizer_path: "gpt2"  # Name of hf tokenizer to load
+  model_path: "/nfs/scratch_2/marco/OpenELM/codegen_converted" #"Salesforce/codegen-350M-mono"  # Name of hf model to load
+  tokenizer_path: "Salesforce/codegen-350M-mono"  # Name of hf tokenizer to load
   model_type: "AcceleratePPOSoftpromptModel"  # Name of accelerate model type to load
   num_layers_unfrozen: 0  # Number of bottom layers to freeze during training
 
 train:
-  seq_length: 68  # Size of LM context
+  seq_length: 148  # Size of LM context
   epochs: 5000 # Train for max(epochs, total_steps)
   total_steps: 30000  # Train for max(epochs, total_steps)
-  batch_size: 128  # batch size
+  batch_size: 32  # batch size
 
   lr_init: 1.0e-4  # init learning rate
   lr_target: 1.0e-4  # target final learning rate
@@ -21,6 +21,7 @@ train:
 
   pipeline: "PromptPipeline"  # prompt pipeline to load
   orchestrator: "PPOSoftpromptOrchestrator"  # orchestrator to load
+  seed: 69
 
 method:
   name: 'pposoftpromptconfig'  # Name of RL method config
@@ -44,7 +45,7 @@ method:
   ref_std: null # rescale rewards with this deviation
   cliprange_reward: 10
   gen_kwargs:
-    max_length: 48  # LM max sample gen length
+    max_length: 128  # LM max sample gen length
     min_length: 0  # LM min sample gen length
     top_k: 0.0  # top k
     top_p: 1.0  # top p
