@@ -1,30 +1,41 @@
-[tool.isort]
-profile = "black"
-
 [build-system]
-requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=64", "setuptools_scm[toml]>=7"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = ["elm"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools_scm]
 
+[tool.isort]
+profile = "black"
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = [
+    "E203",
+    "E501",
+    "W503",
+    "F811",
+]
+extend-exclude = ["docs"]
+count = true
+statistics = true
+
 [tool.pydocstyle]
 convention = "google"
-add-ignore = "D10"
+add-ignore = "D10, D212"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-rA" # --cov=elm"  # Uncomment this for coverage by default
+addopts = "-rA -x --doctest-modules --color=yes" # --cov=openelm"  # Uncomment this for coverage by default
 testpaths = ["tests"]
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "IGNORE_EXCEPTION_DETAIL"]
 
 [project]
-name = "ELM"
+name = "OpenELM"
 description = "Evolution Through Large Models"
+authors = [{name = "CarperAI"}]
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -54,14 +65,27 @@ dev = [
     "black",
     "isort",
     "flake8",
+    "flake8-pyproject",
     "pydocstyle",
     "mypy",
     "pre-commit",
     "pytest",
     "pytest-cov",
 ]
-full = [
+benchmarks = [
     "pygraphviz",
-    "graphviz"
+    "graphviz",
+    "openai",
+]
+docs = [
+    "sphinx==5.3.0",
+    "sphinx_rtd_theme",
+    "sphinx_autodoc_typehints",
+]
+trlx = [
+    "trlx @ git+https://github.com/CarperAI/trlx.git",
+]
+triton = [
+    "tritonclient[all]",
 ]
 notebook = ["ipython"]
