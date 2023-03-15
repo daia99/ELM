@@ -69,10 +69,9 @@ class IESoRWorld(Framework):
         self.groundBody: b2.b2Body = self._add_body_to_world(
             "ground", self.groundBodyDef
         )
-        # Define the ground box shape.
-        self.groundBox: b2.b2PolygonShape = b2.b2PolygonShape()
-        # The extents are the half-widths of the box.
-        self.groundBox.SetAsBox(350.0, 10.0)
+
+        self.groundBox = self.load_ground_body("right")
+
         # Add the ground fixture to the ground body.
         self._add_shape_to_body(self.groundBody, self.groundBox)
 
@@ -582,6 +581,23 @@ class IESoRWorld(Framework):
         self.shape_list.append(shape_id)
         return shape_id
 
+    def load_ground_body(self, type: str):
+
+        if type == "rigth":
+            groundBox = b2.b2PolygonShape(vertices=[(350, -10), (350, 50), (250, 50), (250, 10), (-350, 10), (-350, -10)])
+        elif type == "left":
+            raise NotImplementedError
+        elif type == "tunnel":
+            raise NotImplementedError
+        elif type == "wave":
+            raise NotImplementedError
+        else:
+            # Define the ground box shape.
+            groundBox = b2.b2PolygonShape()
+            # The extents are the half-widths of the box.
+            groundBox.SetAsBox(350.0, 10.0)
+
+        return groundBox
 
 def load_data_file(file_path: Path) -> str:
     """Load object from data file."""
