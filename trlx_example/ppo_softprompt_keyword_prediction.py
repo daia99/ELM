@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import trlx
 from datasets import load_dataset
 
+
 # to register the added softprompt model, and supported orchestrator, need to import here
 from model.accelerate_ppo_softprompt_model import AcceleratePPOSoftpromptModel
 from orchestrator.ppo_softprompt_orchestrator import PPOSoftpromptOrchestrator
@@ -33,11 +34,14 @@ if __name__ == "__main__":
     ]  # set reward as 0 if max length is reached.
 
     def reward_fn(samples):
-        samples_tokenized = tokenizer(samples)
-        samples_token_ids = samples_tokenized.data["input_ids"]
-        reward = [
-            (1 - len(item_ids) / max_gen_length) for item_ids in samples_token_ids
-        ]
+        whitelist_words = ["class", "def", "os", "return"]
+        max_possible_count = 30
+        reward = []
+        for item in samples:
+            reward_item = 0
+            for keyword in whitelist_words:
+                reward_item = item.count(keyword)
+            reward.append(min(reward_item, max_possible_count)/max_possible_count)
 
         return reward  # list of scalar reward scores for each response
 
