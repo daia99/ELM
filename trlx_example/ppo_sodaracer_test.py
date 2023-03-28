@@ -13,15 +13,7 @@ from trlx.data.method_configs import register_method
 from trlx.model.nn.ppo_models import PPOConfig
 import sys
 
-
-class Terrains(Enum):
-    """
-    Defined for readability, to be moved to different script and used also for simulator interface
-    """
-    LEFT_WALL = '1'
-    RIGHT_WALL = '2'
-    BUMPY = '3'
-    TUNNEL = '4'
+from utils import Terrains
 
 
 @dataclass

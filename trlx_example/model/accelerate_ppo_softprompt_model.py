@@ -13,6 +13,8 @@ from trlx.model import register_model
 from trlx.model.accelerate_ppo_model import AcceleratePPOModel
 from trlx.model.nn.ppo_models import CausalLMHydraWithValueHead
 
+from ..utils import Terrains
+
 
 class SoftEmbedding(nn.Module):
     def __init__(
@@ -21,6 +23,7 @@ class SoftEmbedding(nn.Module):
         n_tokens: int = 10,
         random_range: float = 0.5,
         initialize_from_vocab: bool = True,
+        tokenizer = None,
     ):
         """
         appends learned embedding as prefix
@@ -32,6 +35,7 @@ class SoftEmbedding(nn.Module):
             n_tokens (int, optional): number of tokens for task. Defaults to 10.
             random_range (float, optional): range to init embedding (if not initialize from vocab). Defaults to 0.5.
             initialize_from_vocab (bool, optional): initalizes from default vocab. Defaults to True.
+            tokenizer (optional): used to 
         """
         super().__init__()
         self.wte = wte
@@ -45,6 +49,13 @@ class SoftEmbedding(nn.Module):
             )
         )
         self.init_embedding = copy.deepcopy(self.learned_embedding)
+        
+        # for multi-terrain learning, initialize soft prompts 4 times, and use special tokens
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
+            self.num_terrains = len(Terrains)
+            self.terrain_id_tokens = [self.tokenizer.encode(terrain.value)[0] for terrain in Terrains] # single tokens
+            self.learned_embedding_list = [copy.deepcopy(self.learned_embedding) for i in range(self.num_terrains)]
 
     def initialize_embedding(
         self,
@@ -155,6 +166,11 @@ class AcceleratePPOSoftpromptModel(AcceleratePPOModel):
             config.model.model_path, config.model.num_layers_unfrozen
         )
 
+        if True: # TODO: config enable mult-task soft prompts
+            tokenizer = model.tokenizer
+        else:
+            tokenizer = None
+
         # if all layers are frozen, freeze all params. Softprompt will still be tuned
         if config.model.num_layers_unfrozen == 0:
             model.requires_grad_(False)
@@ -174,6 +190,7 @@ class AcceleratePPOSoftpromptModel(AcceleratePPOModel):
             model.base_model.get_input_embeddings(),
             n_tokens=self.n_soft_tokens,
             initialize_from_vocab=config.method.initialize_from_vocab,
+            tokenizer=tokenizer
         )
 
         model.base_model.set_input_embeddings(s_wte)
